@@ -20,7 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+
 #pragma once
+
 
 #include <cstdint>
 
@@ -192,7 +194,7 @@ namespace MTTF
         U32 checksum;
         U32 offset;
         U32 length;
-    }
+    };
 
     enum class FontVersion
     {
@@ -285,8 +287,8 @@ namespace MTTF
         I16 line_gap;
         U16 advance_width_max;
 
-        auto Load(StrView path) -> Variant<FontData, Error>;
-        auto Load(Span<const U8>) -> Variant<FontData, Error>;
+        auto Load(StrView path) -> Error;
+        auto Load(Span<const U8>) -> Error;
         auto GetCharIndex(I32 codepoint) const -> U32;
         auto FetchGlyphFataForCodepoint(I32 codepoint) -> GlyphData;
     private:
@@ -312,7 +314,7 @@ namespace MTTF
             Span<const TTFPoint> vertices,
             Span<const U8> flags,
             U64 sidx,
-            U64 eidx,
+            U64 eidx
         ) -> U64;
     };
 
@@ -335,3 +337,12 @@ namespace MTTF
     constexpr U16 PLATFORM_SPECIFIC_ID_MS_UCS2 = 1;
     constexpr U16 PLATFORM_SPECIFIC_ID_MS_UCS4 = 10;
 }
+
+#ifdef MIN_TTF_IMPLEMENTATION
+
+namespace WL
+{
+
+}
+
+#endif
