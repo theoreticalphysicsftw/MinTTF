@@ -340,9 +340,97 @@ namespace MTTF
 
 #ifdef MIN_TTF_IMPLEMENTATION
 
-namespace WL
+namespace MTTF
 {
+    auto FontData::LoadContour(GlyphData& data, Span<const TTFPoint> vertices, Span<const U8> flags, U64 sidx, U64 eidx) -> U64
+    {
+        return U64();
+    }
 
+    auto FontData::Load(StrView path) -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::Load(Span<const U8>) -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::GetCharIndex(I32 codepoint) const -> U32
+    {
+        return U32();
+    }
+
+    auto FontData::FetchGlyphFataForCodepoint(I32 codepoint) -> GlyphData
+    {
+        return GlyphData();
+    }
+
+    auto FontData::ParseContents() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::ParseTtOutlinesFont() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::ParseCffOutlinesFont() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::FindTable(U32 tag) -> Location
+    {
+        return Location();
+    }
+
+    auto FontData::ParseTtfContainedFont() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::FetchGlobalInfoFromHead() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::FetchGlobalInfoFromHhea() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::GetIdxDataTableFromCmap() -> Error
+    {
+        return Error();
+    }
+
+    auto FontData::GetCharIndexFmt4(U32 codepoint) const -> U32
+    {
+        return U32();
+    }
+
+    auto FontData::GetCharIndexFmt6(U32 codepoint) const -> U32
+    {
+        return U32();
+    }
+
+    auto FontData::GetCharIndexFmt12(U32 codepoint) const -> U32
+    {
+        return U32();
+    }
+
+    auto FontData::GetGlyphOffset(U32 glyphIndex) const -> U32
+    {
+        return U32();
+    }
+
+    auto FontData::FetchGlyphData(U32 glyphIndex) -> GlyphData
+    {
+        return GlyphData();
+    }
 }
 
 #endif
