@@ -21,9 +21,8 @@
 // SOFTWARE.
 
 
-#include "../MinTTF.hpp"
-
 #define MIN_TTF_IMPLEMENTATION
+#include "../MinTTF.hpp"
 
 using namespace MTTF;
 
