@@ -43,6 +43,7 @@
 #include <utility>
 #include <type_traits>
 
+#include <bit>
 
 namespace MTTF
 {
@@ -159,6 +160,83 @@ namespace MTTF
         return std::forward<T>(t);
     }
 
+
+    template <typename T>
+    auto ByteSwap(T x) -> T
+    {
+        T result;
+        auto bytes = (Byte*) &x;
+
+        for (auto i = 0u; i < sizeof(T); ++i)
+        {
+            result[i] = bytes[sizeof(T) - 1 - i];
+        }
+
+        return result;
+    }
+
+    template <typename T>
+        requires (sizeof(T) == 2)
+    auto ByteSwap(T x) -> T
+    {
+        T result;
+        auto uXPtr = (U16*)&x;
+        *((U16*)&result) = *uXPtr << 8 | (*uXPtr) >> 8;
+        return result;
+    }
+
+    template <typename T>
+        requires (sizeof(T) == 4)
+    auto ByteSwap(T x) -> T
+    {
+        T result;
+        auto uXPtr = (U32*)&x;
+        *((U32*)&result) =
+            ((*uXPtr & 0xFF000000u) >> 24) |
+            ((*uXPtr & 0x00FF0000u) >> 8) |
+            ((*uXPtr & 0x0000FF00u) << 8) |
+            ((*uXPtr & 0x000000FFu) << 24);
+        return result;
+    }
+
+    template <typename T>
+        requires (sizeof(T) == 8)
+    auto ByteSwap(T x) -> T
+    {
+        T result;
+        auto uXPtr = (U64*)&x;
+        *((U64*)&result) =
+            ((*uXPtr & 0xFF00000000000000ull) >> 56) |
+            ((*uXPtr & 0x00FF000000000000ull) >> 40) |
+            ((*uXPtr & 0x0000FF0000000000ull) >> 24) |
+            ((*uXPtr & 0x000000FF00000000ull) >> 8) |
+            ((*uXPtr & 0x00000000FF000000ull) << 8) |
+            ((*uXPtr & 0x0000000000FF0000ull) << 24) |
+            ((*uXPtr & 0x000000000000FF00ull) << 40) |
+            ((*uXPtr & 0x00000000000000FFull) << 56);
+        return result;
+    }
+
+    template <typename T>
+    auto FromBE(T x) -> T
+    {
+        if constexpr (std::endian::native == std::endian::little)
+        {
+            return ByteSwap(x);
+        }
+        return x;
+    }
+
+    template <typename T>
+    auto FromLE(T x) -> T
+    {
+        if constexpr (std::endian::native == std::endian::big)
+        {
+            return ByteSwap(x);
+        }
+        return x;
+    }
+
     enum class Error
     {
         Success,
@@ -236,7 +314,7 @@ namespace MTTF
     {
         TTFPoint startPoint;
         TTFPoint endPoint;
-
+        Line() {}
         Line(TTFPoint s, TTFPoint e)
             : startPoint(s), endPoint(e)
         {
@@ -293,6 +371,7 @@ namespace MTTF
         auto FetchGlyphFataForCodepoint(I32 codepoint) -> GlyphData;
     private:
 
+        auto CheckFontVersion(U32 v) const -> FontVersion;
         auto ParseContents() -> Error;
         auto ParseTtOutlinesFont() -> Error;
         auto ParseCffOutlinesFont()->Error;
@@ -367,9 +446,50 @@ namespace MTTF
         return GlyphData();
     }
 
+    inline auto FontData::CheckFontVersion(U32 v) const -> FontVersion
+    {
+        if (v == FromLE(0x00000100u))
+        {
+            return FontVersion::OpenType10;
+        }
+        else if (v == FromLE(0x65757274u))
+        {
+            return FontVersion::AppleTTF;
+        }
+        else if (v == 0x4F54544F)
+        {
+            return FontVersion::OpenTypeCCF;
+        }
+        else if (v == 0x31707974)
+        {
+            return FontVersion::OldPostScript;
+        }
+        else
+        {
+            return FontVersion::Unsupported;
+        }
+    }
+
     auto FontData::ParseContents() -> Error
     {
-        return Error();
+        auto offsetTable = (OffsetTable*)data.data();
+
+        auto version = CheckFontVersion(offsetTable->version);
+
+        tableCount = FromBE(offsetTable->numTables);
+
+        switch (version)
+        {
+            case FontVersion::OpenType10:
+            case FontVersion::AppleTTF:
+                return ParseTtOutlinesFont();
+            case FontVersion::OpenTypeCCF:
+                return ParseCffOutlinesFont();
+            default:
+                return Error::UnsupportedFormat;
+        }
+
+        return Error::Success;
     }
 
     auto FontData::ParseTtOutlinesFont() -> Error
