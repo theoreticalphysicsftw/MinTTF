@@ -295,6 +295,9 @@ namespace MTTF
     {
         TTFScalar x;
         TTFScalar y;
+
+        TTFPoint() {}
+        TTFPoint(TTFScalar x, TTFScalar y): x(x), y(y) {}
     };
 
     struct QuadraticBezierCurve
@@ -303,6 +306,7 @@ namespace MTTF
         TTFPoint controlPoint;
         TTFPoint endPoint;
 
+        QuadraticBezierCurve() {}
         QuadraticBezierCurve(TTFPoint s, TTFPoint c, TTFPoint e)
             : startPoint(s), controlPoint(c), endPoint(e)
         {
@@ -368,7 +372,7 @@ namespace MTTF
         auto Load(StrView path) -> Error;
         auto Load(Span<const U8>) -> Error;
         auto GetCharIndex(I32 codepoint) const -> U32;
-        auto FetchGlyphFataForCodepoint(I32 codepoint) -> GlyphData;
+        auto FetchGlyphDataForCodepoint(I32 codepoint) -> GlyphData;
     private:
 
         auto CheckFontVersion(U32 v) const -> FontVersion;
@@ -423,28 +427,203 @@ namespace MTTF
 {
     auto FontData::LoadContour(GlyphData& data, Span<const TTFPoint> vertices, Span<const U8> flags, U64 sidx, U64 eidx) -> U64
     {
-        return U64();
+        auto cidx = sidx;
+
+        if ((flags[cidx] & 1u) == 0)
+            // The first point is control point
+        {
+            auto curve = QuadraticBezierCurve();
+
+            if ((flags[eidx] & 1u) == 0)
+            {
+                curve.startPoint.x = ((I32(vertices[cidx].x) + I32(vertices[eidx].x)) / 2);
+                curve.startPoint.y = ((I32(vertices[cidx].y) + I32(vertices[eidx].y)) / 2);
+            }
+            else
+            {
+                curve.startPoint = vertices[eidx];
+            }
+
+            curve.controlPoint = vertices[cidx];
+            // No bound checking at this level.
+            cidx += 1;
+
+            if ((flags[cidx] & 1u) == 0)
+            {
+                curve.endPoint.x = ((I32(curve.controlPoint.x) + I32(vertices[cidx].x)) / 2);
+                curve.endPoint.y = ((I32(curve.controlPoint.y) + I32(vertices[cidx].y)) / 2);
+            }
+            else
+            {
+                curve.endPoint = vertices[cidx];
+            }
+
+            data.components.emplace_back(curve);
+        }
+
+        while (cidx < eidx)
+        {
+            // At least the first point has been added already so we can safely check the
+            // previous point.
+
+            if ((flags[cidx] & 1u) == 0)
+            {
+                // The previous point must be a control point because else we would've
+                // parsed the whole curve in the previous iteration
+                auto startPoint =
+                    TTFPoint
+                    (
+                        ((I32(vertices[cidx - 1].x) + I32(vertices[cidx].x)) / 2),
+                        ((I32(vertices[cidx - 1].y) + I32(vertices[cidx].y)) / 2)
+                    );
+
+                if ((flags[cidx + 1] & 1u) == 0)
+                {
+                    auto endPoint =
+                        TTFPoint
+                        (
+                            ((I32(vertices[cidx].x) + I32(vertices[cidx + 1].x)) / 2),
+                            ((I32(vertices[cidx].y) + I32(vertices[cidx + 1].y)) / 2)
+                        );
+
+                    auto curve = QuadraticBezierCurve(startPoint, vertices[cidx], endPoint);
+                    data.components.emplace_back(curve);
+                }
+                else
+                {
+                    auto curve =
+                        QuadraticBezierCurve(startPoint, vertices[cidx], vertices[cidx + 1]);
+                    data.components.emplace_back(curve);
+                }
+            }
+            else
+            {
+                if ((flags[cidx + 1] & 1u) == 0)
+                {
+                    TTFPoint endPoint;
+
+                    if (cidx + 1 == eidx)
+                    {
+                        if ((flags[sidx] & 1u) == 0)
+                        {
+                            endPoint.x = ((I32(vertices[sidx].x) + I32(vertices[eidx].x)) / 2);
+                            endPoint.y = ((I32(vertices[sidx].y) + I32(vertices[eidx].y)) / 2);
+                        }
+                        else
+                        {
+                            endPoint = vertices[sidx];
+                        }
+
+                        auto curve = QuadraticBezierCurve(vertices[cidx], vertices[cidx + 1], endPoint);
+                        data.components.emplace_back(curve);
+                    }
+                    else
+                    {
+                        // The next index is not the last so we can use at least one more point.
+                        if ((flags[cidx + 2] & 1u) == 0)
+                        {
+                            endPoint.x = ((I32(vertices[cidx + 1].x) + I32(vertices[cidx + 2].x)) / 2);
+                            endPoint.y = ((I32(vertices[cidx + 1].y) + I32(vertices[cidx + 2].y)) / 2);
+                        }
+                        else
+                        {
+                            endPoint = vertices[cidx + 2];
+                        }
+
+                        auto curve = QuadraticBezierCurve(vertices[cidx], vertices[cidx + 1], endPoint);
+                        data.components.emplace_back(curve);
+                    }
+
+                    // We used one more point here.
+                    cidx += 1;
+                }
+                else
+                {
+                    data.components.emplace_back(Line(vertices[cidx], vertices[cidx + 1]));
+                }
+            }
+
+            cidx += 1;
+        }
+
+        if (cidx == eidx)
+        {
+            if ((flags[eidx] & 1u) == 0)
+            {
+                // The previous point must be a control point because else we would've
+                // parsed the whole curve before this part of the code
+                auto startPoint =
+                    TTFPoint
+                    (
+                        ((I32(vertices[eidx - 1].x) + I32(vertices[eidx].x)) / 2),
+                        ((I32(vertices[eidx - 1].y) + I32(vertices[eidx].y)) / 2)
+                    );
+
+                TTFPoint endPoint;
+
+                if ((flags[sidx] & 1u) == 0)
+                {
+                    endPoint.x = ((I32(vertices[sidx].x) + I32(vertices[eidx].x)) / 2);
+                    endPoint.y = ((I32(vertices[sidx].y) + I32(vertices[eidx].y)) / 2);
+                }
+                else
+                {
+                    endPoint = vertices[sidx];
+                }
+
+                auto curve = QuadraticBezierCurve(startPoint, vertices[eidx], endPoint);
+                data.components.emplace_back(QuadraticBezierCurve(curve));
+            }
+            else
+            {
+                // If the start was control point we have already pushed this curve in the
+                // beginning.
+                if ((flags[sidx] & 1u) > 0)
+                {
+                    data.components.emplace_back(Line(vertices[eidx], vertices[sidx]));
+                }
+            }
+        }
+
+        return eidx + 1;
     }
+
 
     auto FontData::Load(StrView path) -> Error
     {
         return Error();
     }
 
-    auto FontData::Load(Span<const U8>) -> Error
+
+    auto FontData::Load(Span<const U8> data) -> Error
     {
-        return Error();
+        data = data;
+        return ParseContents();
     }
+
 
     auto FontData::GetCharIndex(I32 codepoint) const -> U32
     {
-        return U32();
+        switch (charEncodingFormat)
+        {
+            case 4:
+                return GetCharIndexFmt4(codepoint);
+            case 6:
+                return GetCharIndexFmt6(codepoint);
+            case 12:
+                GetCharIndexFmt12(codepoint);
+            // This is impossible since we already checked for those formats
+            default:
+                return 0;
+        }
     }
 
-    auto FontData::FetchGlyphFataForCodepoint(I32 codepoint) -> GlyphData
+
+    auto FontData::FetchGlyphDataForCodepoint(I32 codepoint) -> GlyphData
     {
-        return GlyphData();
+        return FetchGlyphData(GetCharIndex(codepoint));
     }
+
 
     inline auto FontData::CheckFontVersion(U32 v) const -> FontVersion
     {
@@ -470,6 +649,7 @@ namespace MTTF
         }
     }
 
+
     auto FontData::ParseContents() -> Error
     {
         auto offsetTable = (OffsetTable*)data.data();
@@ -492,60 +672,199 @@ namespace MTTF
         return Error::Success;
     }
 
+
     auto FontData::ParseTtOutlinesFont() -> Error
     {
-        return Error();
+        auto status = ParseTtfContainedFont();
+
+        if (status != Error::Success)
+        {
+            return status;
+        }
+
+        glyfTable = FindTable(FromLE(GLYF_TAG_LE));
+        locaTable = FindTable(FromLE(LOCA_TAG_LE));
+
+        if (glyfTable.offset == 0)
+        {
+            return Error::NoGlyfTable;
+        }
+
+        if (locaTable.offset == 0)
+        {
+            return Error::NoLocaTable;
+        }
+
+        Error::Success;
     }
+
 
     auto FontData::ParseCffOutlinesFont() -> Error
     {
-        return Error();
+        auto status = ParseTtfContainedFont();
+
+        if (status != Error::Success)
+        {
+            return status;
+        }
+
+        // TODO: Add CFF outlines support.
+        return Error::UnsupportedFormat;
     }
+
 
     auto FontData::FindTable(U32 tag) -> Location
     {
-        return Location();
+        static constexpr U32 initOffset = sizeof(OffsetTable);
+        static constexpr U32 stride = sizeof(TableDirectoryEntry);
+
+        for(auto k = 0u; k < tableCount; ++k)
+        {
+            auto currentOffset  = initOffset + k * stride;
+
+            if (*(const U32*)((const Byte*) data.data() + currentOffset) == tag)
+            {
+                // TODO: provide support for computing table checksums
+                auto tdePtr = (const TableDirectoryEntry*) ((const Byte*)data.data() + currentOffset);
+
+                return Location
+                {
+                    .offset = FromBE(tdePtr->offset),
+                    .length = FromBE(tdePtr->length)
+                };
+            }
+        }
+
+        return Location{ .offset = 0, .length = 0 };
     }
+
 
     auto FontData::ParseTtfContainedFont() -> Error
     {
-        return Error();
+        #define MTTF_GET_TABLES(VAR_NAME, TAG, ERROR) \
+            VAR_NAME = FindTable(FromLE(TAG)); \
+            if (VAR_NAME.offset == 0) \
+            { \
+                return ERROR; \
+            } \
+        
+        MTTF_GET_TABLES(cmapTable, CMAP_TAG_LE, Error::NoCmapTable);
+        MTTF_GET_TABLES(nameTable, NAME_TAG_LE, Error::NoNameTable);
+        MTTF_GET_TABLES(maxpTable, MAXP_TAG_LE, Error::NoMaxpTable);
+        MTTF_GET_TABLES(hheaTable, HHEA_TAG_LE, Error::NoHheaTable);
+        MTTF_GET_TABLES(headTable, HEAD_TAG_LE, Error::NoHeadTable);
+        MTTF_GET_TABLES(hmtxTable, HMTX_TAG_LE, Error::NoHmtxTable);
+
+        auto status = GetIdxDataTableFromCmap();
+
+        if (status != Error::Success)
+        {
+            return status;
+        }
+
+        auto status = FetchGlobalInfoFromHead();
+
+        if (status != Error::Success)
+        {
+            return status;
+        }
+
+        return FetchGlobalInfoFromHhea();
     }
+
 
     auto FontData::FetchGlobalInfoFromHead() -> Error
     {
-        return Error();
+        struct HeadTable1 
+        {
+            U32 version;
+            U32 fontRevision;
+            U32 checksumAdjustment;
+            U32 magicNumber;
+            U16 flags;
+            U16 unitsPerEm;
+        };
+
+        struct HeadTable2 
+        {
+            I64 created;
+            I64 modified;
+            I16 xMin;
+            I16 yMin;
+            I16 xMax;
+            I16 yMax;
+            U16 macStyle;
+            U16 unused;
+            I16 fontDirectionJint;
+            I16 indexToLocaFormat;
+            I16 glyphDataFormat;
+        };
+
+        auto headTable1Ptr = (const HeadTable1*)(data.data() + headTable.offset);
+        auto headTable2Ptr = (const HeadTable2*)(data.data() + headTable.offset + sizeof(HeadTable1));
+
+        if (FromBE(headTable1Ptr->version) != 0x00010000) 
+        {
+            return Error::UnsupportedLocaTableVersion;
+        }
+        else
+        {
+            xMin = FromBE(headTable2Ptr->xMin);
+            yMin = FromBE(headTable2Ptr->yMin);
+            xMax = FromBE(headTable2Ptr->xMax);
+            yMax = FromBE(headTable2Ptr->yMax);
+            unitsPerEm = FromBE(headTable1Ptr->unitsPerEm);
+
+            switch(FromBE(headTable2Ptr->indexToLocaFormat))
+            {
+                case 0:
+                    longLocaIndex = false;
+                    return Error::Success;
+                case 1:
+                    longLocaIndex = true;
+                    return Error::Success;
+                default:
+                    return Error::UnsupportedLocaTableIndex;
+            }
+        }
     }
+
 
     auto FontData::FetchGlobalInfoFromHhea() -> Error
     {
         return Error();
     }
 
+
     auto FontData::GetIdxDataTableFromCmap() -> Error
     {
         return Error();
     }
+
 
     auto FontData::GetCharIndexFmt4(U32 codepoint) const -> U32
     {
         return U32();
     }
 
+
     auto FontData::GetCharIndexFmt6(U32 codepoint) const -> U32
     {
         return U32();
     }
+
 
     auto FontData::GetCharIndexFmt12(U32 codepoint) const -> U32
     {
         return U32();
     }
 
+
     auto FontData::GetGlyphOffset(U32 glyphIndex) const -> U32
     {
         return U32();
     }
+
 
     auto FontData::FetchGlyphData(U32 glyphIndex) -> GlyphData
     {
