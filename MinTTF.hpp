@@ -597,7 +597,7 @@ namespace MTTF
 
     auto FontData::Load(Span<const U8> data) -> Error
     {
-        data = data;
+        this->data = data;
         return ParseContents();
     }
 
@@ -695,7 +695,7 @@ namespace MTTF
             return Error::NoLocaTable;
         }
 
-        Error::Success;
+        return Error::Success;
     }
 
 
@@ -876,7 +876,74 @@ namespace MTTF
 
     auto FontData::GetIdxDataTableFromCmap() -> Error
     {
-        return Error();
+        struct CmapTableHeader
+        {
+            U16 version;
+            U16 subtableCount;
+        };
+
+        struct CmapSubtable
+        {
+            U16 platformId;
+            U16 platformSpecificId;
+            U32 offset;
+        };
+
+        auto cmapHeaderPtr = (const CmapTableHeader*)(data.data() + cmapTable.offset);
+
+        if (cmapHeaderPtr->version != 0)
+        {
+            return Error::UnsupportedFormat;
+        }
+
+        auto subtableCount = FromBE(cmapHeaderPtr->subtableCount);
+
+        this->indexMapOffset = 0;
+
+        for (auto k = 0; k < subtableCount; ++k)
+        {
+            auto offset = this->cmapTable.offset + sizeof(CmapTableHeader) + k * sizeof(CmapSubtable);
+
+            auto subtablePtr = (const CmapSubtable*)(this->data.data() + offset);
+
+            auto platformId = FromBE(subtablePtr->platformId);
+            auto platformSpecificId = FromBE(subtablePtr->platformSpecificId);
+
+            // We support only unicode encodings.
+
+            if (platformId == PLATFORM_ID_UNICODE)
+            {
+                this->indexMapOffset = this->cmapTable.offset + FromBE(subtablePtr->offset);
+                break;
+            }
+
+            if (
+                    platformId == PLATFORM_ID_MICROSOFT &&
+                    (
+                        platformSpecificId == PLATFORM_SPECIFIC_ID_MS_UCS2 ||
+                        platformSpecificId == PLATFORM_SPECIFIC_ID_MS_UCS4
+                    )
+               )
+            {
+                this->indexMapOffset = this->cmapTable.offset + FromBE(subtablePtr->offset);
+            }
+        }
+
+        if (this->indexMapOffset == 0)
+        {
+            return Error::UnsupportedCharEncoding;
+        }
+
+        // We only support format 4, 6 and 12
+        this->charEncodingFormat = FromBE(*(const U16*)(this->data.data() + this->indexMapOffset));
+
+        if (this->charEncodingFormat != 4 && this->charEncodingFormat != 6 && this->charEncodingFormat != 12)
+        {
+            return Error::UnsupportedFormat;
+        }
+
+        this->indexMapOffset += 2;
+        return Error::Success;
     }
 
 
