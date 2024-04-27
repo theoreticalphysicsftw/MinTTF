@@ -366,8 +366,8 @@ namespace MTTF
         U16 numberOfLongHorizontalMetrics;
         I16 ascent;
         I16 descent;
-        I16 line_gap;
-        U16 advance_width_max;
+        I16 lineGap;
+        U16 advanceWidthMax;
 
         auto Load(StrView path) -> Error;
         auto Load(Span<const U8>) -> Error;
@@ -762,7 +762,7 @@ namespace MTTF
             return status;
         }
 
-        auto status = FetchGlobalInfoFromHead();
+        status = FetchGlobalInfoFromHead();
 
         if (status != Error::Success)
         {
@@ -832,7 +832,45 @@ namespace MTTF
 
     auto FontData::FetchGlobalInfoFromHhea() -> Error
     {
-        return Error();
+        struct HheaTable
+        {
+            U32 version;
+            I16 ascent;
+            I16 descent;
+            I16 lineGap;
+            U16 advanceWidthMax;
+            I16 minLeftSideBearing;
+            I16 minRightSideBearing;
+            // "The extent is the distance from the left side bearing to the right most positions 
+            // in the glyph outline." 
+            //    - https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6hhea.html
+            I16 xMaxExtent;
+            I16 caretSlopeRise;
+            I16 caretSoloRun;
+            I16 caretOffset;
+            I16 reserved0;
+            I16 reserved1;
+            I16 reserved2;
+            I16 reserved3;
+            I16 metricDataFormat;
+            U16 numberOfLongHorizontalMetrics;
+        };
+
+
+        auto hheaTablePtr  = (const HheaTable*)(data.data() + hheaTable.offset);
+
+        if (FromBE(hheaTablePtr->version) != 0x00010000)
+        {
+            return Error::UnsupportedHheaTableVersion;
+        }
+
+        ascent = FromBE(hheaTablePtr->ascent);
+        descent = FromBE(hheaTablePtr->descent);
+        lineGap = FromBE(hheaTablePtr->lineGap);
+        advanceWidthMax = FromBE(hheaTablePtr->advanceWidthMax);
+        numberOfLongHorizontalMetrics = FromBE(hheaTablePtr->numberOfLongHorizontalMetrics);
+
+        return Error::Success;
     }
 
 
