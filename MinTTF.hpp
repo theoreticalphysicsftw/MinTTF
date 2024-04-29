@@ -228,6 +228,12 @@ namespace MTTF
     }
 
     template <typename T>
+    auto Max(T a, T b) -> T
+    {
+        return std::max(a, b);
+    }
+
+    template <typename T>
     auto FromLE(T x) -> T
     {
         if constexpr (std::endian::native == std::endian::big)
@@ -949,25 +955,178 @@ namespace MTTF
 
     auto FontData::GetCharIndexFmt4(U32 codepoint) const -> U32
     {
-        return U32();
+        struct Table4
+        {
+            U16 length;
+            U16 unused;
+            U16 segCountX2;
+            U16 searchRange;
+            U16 entrySelector;
+            U16 rangeShift;
+        };
+
+        auto t4Ptr = (const Table4*) (this->data.data() + this->indexMapOffset);
+        auto segCountX2 = FromBE(t4Ptr->segCountX2);
+        auto searchRange = FromBE(t4Ptr->searchRange);
+        auto entrySelector = FromBE(t4Ptr->entrySelector);
+        auto rangeShift = FromBE(t4Ptr->rangeShift);
+
+        auto dataBeginning = this->indexMapOffset + sizeof(Table4);
+
+        auto searchOffset = dataBeginning;
+
+        // Binary search can be performed since segments are sorted by end codepoint
+        if (codepoint >= FromBE(*(const U16*)(this->data.data() + searchOffset + rangeShift)))
+        {
+            searchOffset += rangeShift;
+        }
+
+        searchOffset -= 2;
+
+        for (auto i = 0u; i < entrySelector; ++i)
+        {
+            searchRange /= 2;
+            auto endCodepoint = FromBE(*(const U16*)(this->data.data() + searchOffset + searchRange));
+
+            if (codepoint > endCodepoint)
+            {
+                searchOffset += searchRange;
+            }
+        }
+
+        searchOffset += 2;
+
+        // Now the search_offset should be what we need.
+        auto segment = (searchOffset - dataBeginning) / 2;
+
+        // Two bytes pad after the end codes
+        auto startCodesOffset = dataBeginning + segCountX2 + 2;
+        auto deltasOffset = startCodesOffset + segCountX2;
+        auto rangesOffset = deltasOffset + segCountX2;
+
+        auto segmentStartCode = FromBE(*(const U16*)(this->data.data() + startCodesOffset + 2 * segment));
+        auto segmentRangeOffset = FromBE(*(const U16*)(this->data.data() + rangesOffset + 2 * segment));
+        auto segmentDeltaOffset = FromBE(*(const U16*)(this->data.data() + deltasOffset + 2 * segment));
+
+        if (codepoint < segmentStartCode)
+        {
+            return 0;
+        }
+        else if (segmentRangeOffset == 0)
+        {
+            return codepoint + segmentDeltaOffset;
+        }
+        else
+        {
+            // According to the specification we need to use this obscure indexing trick
+            auto glyphIndexOffset = U32(segmentRangeOffset);
+            glyphIndexOffset += 2 * (codepoint - segmentStartCode);
+            glyphIndexOffset += rangesOffset + 2 * segment;
+
+            auto glyphIndex = FromBE(*(const U16*)(this->data.data() + glyphIndexOffset));
+
+            if (glyphIndex != 0)
+            {
+                return glyphIndex + segmentDeltaOffset;
+            }
+            else
+            {
+                return glyphIndex;
+            }
+        }
     }
 
 
     auto FontData::GetCharIndexFmt6(U32 codepoint) const -> U32
     {
-        return U32();
+        // Skip the first two entries.
+        auto dataBeginning = this->indexMapOffset + 4;
+
+        auto firstCode = FromBE(*(const U16*)(this->data.data() + dataBeginning));
+        dataBeginning += 2;
+        auto code_count = FromBE(*(const U16*)(this->data.data() + dataBeginning));
+        dataBeginning += 2;
+
+        if (codepoint >= firstCode + code_count)
+        {
+            return 0;
+        }
+        else
+        {
+            auto indexOffset = Max(U32(dataBeginning + (U16(codepoint) - firstCode)), U32(data.size() - 2));
+            return FromBE(*(const U16*)(this->data.data() + indexOffset));
+        }
+
     }
 
 
     auto FontData::GetCharIndexFmt12(U32 codepoint) const -> U32
     {
-        return U32();
+        struct Header
+        {
+            U32 format;
+            U32 length;
+            U32 unused;
+            U32 groupCount;
+        };
+
+        struct Group
+        {
+            U32 startCodepoint;
+            U32 endCodepoint;
+            U32 startCodepointIdx;
+        };
+
+        auto headerPtr = (const Header*)(this->data.data() + this->indexMapOffset - 2);
+
+        auto groupCount = FromBE(headerPtr->groupCount);
+
+        auto groupsOffset = this->indexMapOffset - 2 + sizeof(Header);
+
+        auto searchStart = 0u;
+        auto searchEnd = groupCount;
+
+        while (searchStart < searchEnd)
+        {
+            auto mid = searchStart + (searchEnd - searchEnd) / 2;
+
+            auto currentSegmentPtr = (const Group*) (this->data.data() + groupsOffset + mid * sizeof(Group));
+
+            auto startCodepoint = FromBE(currentSegmentPtr->startCodepoint);
+            auto endCodepoint = FromBE(currentSegmentPtr->endCodepoint);
+
+            if (startCodepoint > codepoint)
+            {
+                searchEnd = mid;
+            }
+            else if (endCodepoint < codepoint)
+            {
+                searchStart = mid + 1;
+            }
+            else
+            {
+                return FromBE(currentSegmentPtr->startCodepointIdx) + mid;
+            }
+        }
+
+        return 0;
     }
 
 
     auto FontData::GetGlyphOffset(U32 glyphIndex) const -> U32
     {
-        return U32();
+        auto offset = this->glyfTable.offset;
+
+        if (this->longLocaIndex)
+        {
+            offset += FromBE(*(const U32*)(this->locaTable.offset + 4 * glyphIndex));
+        }
+        else
+        {
+            offset += FromBE(*(const U16*)(this->locaTable.offset + 2 * glyphIndex)) * 2;
+        }
+
+        return offset;
     }
 
 
