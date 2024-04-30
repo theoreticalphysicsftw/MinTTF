@@ -1132,7 +1132,170 @@ namespace MTTF
 
     auto FontData::FetchGlyphData(U32 glyphIndex) -> GlyphData
     {
-        return GlyphData();
+        GlyphData glyphData;
+
+        auto glyphOffset = this->GetGlyphOffset(glyphIndex);
+
+        struct GlyfHeader
+        {
+            I32 numberOfContours;
+            I32 xMin;
+            I32 yMin;
+            I32 xMax;
+            I32 yMax;
+        };
+
+        auto glyfHeaderPtr = (const GlyfHeader*)(this->data.data() + glyphOffset);
+
+        auto d0 = TTFPoint(FromBE(glyfHeaderPtr->xMin), FromBE(glyfHeaderPtr->yMin));
+        auto d1 = TTFPoint(FromBE(glyfHeaderPtr->xMax), FromBE(glyfHeaderPtr->yMax));
+
+        glyphData.boundingBoxDiagonal = Line(d0, d1);
+
+        auto currentOffset = glyphOffset + sizeof(GlyfHeader);
+
+        auto numberOfContours = FromBE(glyfHeaderPtr->numberOfContours);
+
+        // Simple glyph
+        if (numberOfContours >= 0)
+        {
+            Array<U16> endPointsOfContours;
+
+            auto endPointsOfContoursPtr = (const U16*)(this->data.data() + currentOffset);
+
+            for (auto i = 0; i < numberOfContours; ++i)
+            {
+                endPointsOfContours.push_back(FromBE(endPointsOfContoursPtr[i]));
+            }
+
+            currentOffset += 2 * numberOfContours;
+
+            auto instructionLength = FromBE(*(const U16*)(this->data.data() + currentOffset));
+
+            // Skip instructions;
+            currentOffset += instructionLength + 2;
+
+            auto numberOfVertices = endPointsOfContours[(numberOfContours - 1)] + 1;
+
+            Array<U8> flags;
+            flags.reserve(numberOfVertices);
+            U8 repeatFlags = 0;
+            U8 flag  = 0;
+
+            // Loading the flags first storing the repeating ones as well.
+            for (auto i = 0u; i < numberOfVertices; ++i)
+            {
+                if (repeatFlags == 0)
+                {
+                    flag = this->data.data()[currentOffset];
+                    currentOffset += 1;
+
+                    if ((flag & 0b00001000) > 0)
+                    {
+                        repeatFlags = this->data.data()[currentOffset];
+                        currentOffset += 1;
+                    }
+                }
+                else
+                {
+                    repeatFlags -= 1;
+                }
+
+                flags.push_back(flag);
+            }
+
+            Array<TTFPoint> vertices;
+            vertices.resize(numberOfVertices);
+
+            auto prevCoord = 0;
+            // Reading the first coordinates
+            for (auto i = 0u; i < numberOfVertices; ++i)
+            {
+               // Coordinate is encoded as u8
+               if ((flags[i] & 0b00000010u) > 0)
+               {
+                   auto tmpCoord = this->data[currentOffset];
+                   currentOffset += 1;
+
+                   // Holy shit!!! The documentation was so misleading here. I had so much trouble
+                   // finding this bug...
+                   vertices[i].x = I32(prevCoord) + ((flags[i] & 0b00010000u) > 0) ? I32(tmpCoord) : I32(-tmpCoord);
+                   prevCoord = vertices[i].x;
+               }
+               // coordinate is encoded as i16
+               else
+               {
+                   // checks if the coordinate is not repeated
+                   if ((flags[i] & 0b00010000u) == 0)
+                   {
+                       auto tmpCoord = FromBE(*(const I16*)(this->data.data() + currentOffset));
+                       currentOffset += 2;
+                       vertices[i].x = prevCoord + I32(tmpCoord);
+                       prevCoord = vertices[i].x;
+                   }
+                   else
+                   {
+                       vertices[i].x = prevCoord;
+                   }
+               }
+            }
+
+            prevCoord = 0;
+            // Reading the second coordinates
+            for (auto i = 0u; i < numberOfVertices; ++i)
+            {
+                // Coordinate is encoded as u8
+                if ((flags[i] & 0b00000100u) > 0)
+                {
+                    auto tmpCoord = this->data[currentOffset];;
+                    currentOffset += 1;
+
+                    // Holy mother of fuck why nobody mentioned that those were deltas as well?!?
+                    // I'm looking at you
+                    // developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6glyf.html
+                    vertices[i].y = I32(prevCoord) + ((flags[i] & 0b00100000u) > 0) ? I32(tmpCoord) : I32(-tmpCoord);
+                    prevCoord = vertices[i].y;
+                }
+                // coordinate is encoded as i16
+                else
+                {
+                    // checks if the coordinate is not repeated
+                    if ((flags[i] & 0b00100000u) == 0)
+                    {
+                        auto tmpCoord = FromBE(*(const I16*)(this->data.data() + currentOffset));
+                        currentOffset += 2;
+                        vertices[i].y = prevCoord + I32(tmpCoord);
+                        prevCoord = vertices[i].y;
+                    }
+                    else
+                    {
+                        vertices[i].y = prevCoord;
+                    }
+                }
+            }
+
+            auto startIndex = 0u;
+
+            for (auto i = 0; i < endPointsOfContours.size(); ++i)
+            {
+                startIndex =
+                    LoadContour
+                    (
+                        glyphData,
+                        Span<const TTFPoint>{vertices},
+                        Span<const U8>{flags},
+                        startIndex,
+                        endPointsOfContours[i]
+                    );
+            }
+        }
+        // Compound glyph
+        else
+        {
+            // TODO: implement support for compound glyphs
+        }
+
+        return glyphData;
     }
 }
 
