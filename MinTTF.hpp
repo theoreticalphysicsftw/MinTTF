@@ -43,6 +43,8 @@
 #include <utility>
 #include <type_traits>
 
+#include <algorithm>
+
 #include <bit>
 
 namespace MTTF
@@ -165,7 +167,7 @@ namespace MTTF
     auto ByteSwap(T x) -> T
     {
         T result;
-        auto bytes = (Byte*) &x;
+        auto bytes = (Byte*)&x;
 
         for (auto i = 0u; i < sizeof(T); ++i)
         {
@@ -181,7 +183,7 @@ namespace MTTF
     {
         T result;
         auto uXPtr = (U16*)&x;
-        *((U16*)&result) = *uXPtr << 8 | (*uXPtr) >> 8;
+        *((U16*)&result) = (*uXPtr << 8) | ((*uXPtr) >> 8);
         return result;
     }
 
@@ -228,12 +230,6 @@ namespace MTTF
     }
 
     template <typename T>
-    auto Max(T a, T b) -> T
-    {
-        return std::max(a, b);
-    }
-
-    template <typename T>
     auto FromLE(T x) -> T
     {
         if constexpr (std::endian::native == std::endian::big)
@@ -241,6 +237,48 @@ namespace MTTF
             return ByteSwap(x);
         }
         return x;
+    }
+
+    template <typename T>
+    auto Max(T a, T b) -> T
+    {
+        return std::max(a, b);
+    }
+
+    template <typename T>
+    auto Min(T a, T b) -> T
+    {
+        return std::min(a, b);
+    }
+
+    template <typename T>
+    auto Swap(T& a, T& b) -> V
+    {
+        std::swap(a, b);
+    }
+
+    template <typename T>
+    auto Floor(T x) -> T
+    {
+        return std::floor(x);
+    }
+
+    template <typename T>
+    auto Ceil(T x) -> T
+    {
+        return std::ceil(x);
+    }
+
+    template <typename T>
+    auto Round(T x) -> T
+    {
+        return std::round(x);
+    }
+
+    template <typename TContainer>
+    auto Sort(TContainer& container)
+    {
+        std::sort(container.begin(), container.end());
     }
 
     enum class Error
@@ -375,10 +413,9 @@ namespace MTTF
         I16 lineGap;
         U16 advanceWidthMax;
 
-        auto Load(StrView path) -> Error;
-        auto Load(Span<const U8>) -> Error;
+        auto Load(Span<const Byte>) -> Error;
         auto GetCharIndex(I32 codepoint) const -> U32;
-        auto FetchGlyphDataForCodepoint(I32 codepoint) -> GlyphData;
+        auto FetchGlyphDataForCodepoint(I32 codepoint) const -> GlyphData;
     private:
 
         auto CheckFontVersion(U32 v) const -> FontVersion;
@@ -396,7 +433,7 @@ namespace MTTF
         auto GetCharIndexFmt6(U32 codepoint) const -> U32;
         auto GetCharIndexFmt12(U32 codepoint) const -> U32;
         auto GetGlyphOffset(U32 glyphIndex) const -> U32;
-        auto FetchGlyphData(U32 glyphIndex) -> GlyphData;
+        auto FetchGlyphData(U32 glyphIndex) const -> GlyphData;
         auto LoadContour
         (
             GlyphData& data,
@@ -404,7 +441,7 @@ namespace MTTF
             Span<const U8> flags,
             U64 sidx,
             U64 eidx
-        ) -> U64;
+        ) const -> U64;
     };
 
 
@@ -425,13 +462,22 @@ namespace MTTF
 
     constexpr U16 PLATFORM_SPECIFIC_ID_MS_UCS2 = 1;
     constexpr U16 PLATFORM_SPECIFIC_ID_MS_UCS4 = 10;
+
+    struct GrayScaleSurface
+    {
+        Array<Byte> data;
+        U32 width;
+        U32 height;
+    };
+
+    auto RasterizeGlyph(const FontData& fontData, I32 codepoint, I32 height) -> GrayScaleSurface;
 }
 
 #ifdef MIN_TTF_IMPLEMENTATION
 
 namespace MTTF
 {
-    auto FontData::LoadContour(GlyphData& data, Span<const TTFPoint> vertices, Span<const U8> flags, U64 sidx, U64 eidx) -> U64
+    auto FontData::LoadContour(GlyphData& data, Span<const TTFPoint> vertices, Span<const U8> flags, U64 sidx, U64 eidx) const -> U64
     {
         auto cidx = sidx;
 
@@ -595,12 +641,6 @@ namespace MTTF
     }
 
 
-    auto FontData::Load(StrView path) -> Error
-    {
-        return Error();
-    }
-
-
     auto FontData::Load(Span<const U8> data) -> Error
     {
         this->data = data;
@@ -625,7 +665,7 @@ namespace MTTF
     }
 
 
-    auto FontData::FetchGlyphDataForCodepoint(I32 codepoint) -> GlyphData
+    auto FontData::FetchGlyphDataForCodepoint(I32 codepoint) const -> GlyphData
     {
         return FetchGlyphData(GetCharIndex(codepoint));
     }
@@ -1130,7 +1170,7 @@ namespace MTTF
     }
 
 
-    auto FontData::FetchGlyphData(U32 glyphIndex) -> GlyphData
+    auto FontData::FetchGlyphData(U32 glyphIndex) const -> GlyphData
     {
         GlyphData glyphData;
 
@@ -1296,6 +1336,531 @@ namespace MTTF
         }
 
         return glyphData;
+    }
+    
+
+    // Rasterizer related functions
+
+    struct Point
+    {
+        F32 x;
+        F32 y;
+
+        Point() {}
+        Point(F32 x, F32 y) : x(x), y(y) {}
+    };
+
+
+    struct Edge
+    {
+        Point lowermostPoint;
+        Point uppermostPoint;
+        // Needs to be +1/-1 but gets padded to 4 bytes anyway in order to preserve alignment 
+        F32 direction;
+    };
+
+    auto operator<(const Edge& e0, const Edge& e1) -> bool 
+    {
+        return e0.uppermostPoint.y < e1.uppermostPoint.y;
+    }
+
+    auto operator==(const Edge& e0, const Edge& e1) -> bool
+    {
+        return e0.uppermostPoint.y == e1.uppermostPoint.y;
+    }
+
+
+    auto AddEdge(Array<Edge>& edges, Point startPoint, Point endPoint) -> V
+    {
+        if (startPoint.y < endPoint.y)
+        {
+            edges.emplace_back(startPoint, endPoint, 1.0);
+        }
+        else if (startPoint.y > endPoint.y)
+        {
+            edges.emplace_back(endPoint, startPoint, -1.0);
+        }
+        else
+        {
+            // In case this happens we can safely drop those
+        }
+    }
+
+
+    // Use special case of De Casteljau's algorithm to turn the curve into polyline.
+    auto Linearize
+    (
+        Array<Edge>& edges,
+        F32 flatnessThreshold,
+        Point point0,
+        Point point1,
+        Point point2
+    ) -> V
+    {
+        // We can safely give hard limit to the depth of the "recursive" subdivision. This is because
+        // depth of 15 giving us 2^15 == 32768 divisions for a single curve is insane even at very large
+        // resolutions. For example even if the curve is bounded by a box of width 4000 pixels then for
+        // the length of the curve is
+        //  \[
+        // 2\int\limits_0^1 \left| (p_2 - p_1)t + (p_1 - p_0) (1-t)\right|dt 
+        //  =
+        // 2\int\limits_0^1 \left| (p_2 - 2p_1 +p_0)t + (p_1 - p_0)\right|dt 
+        // \leq
+        // 2 \int\limits_0^1 8000t dt + 2 \int\limits_0^1 4000 dt 
+        // = 
+        // 8000 + 8000 
+        // =
+        // 16000
+        // 	\]
+        // This means that on average the length of each individual piece of this subdivided curve is 
+        // going to be less than half a pixel!
+
+        // Number of points times the division depth
+        static constexpr U32 STACK_SIZE = 3 * 15;
+
+        StaticArray<Point, STACK_SIZE> stack;
+        stack[0] = point0;
+        stack[1] = point1;
+        stack[2] = point2;
+        U32 stackSize = 3;
+
+        while (0 < stackSize)
+        {
+            auto& beta02 = stack[stackSize - 1];
+            auto& beta01 = stack[stackSize - 2];
+            auto& beta00 = stack[stackSize - 3];
+            stackSize -= 3;
+
+            auto beta10 = Point((beta01.x + beta00.x) / 2.0, (beta01.y + beta00.y) / 2.0);
+            auto beta11 = Point((beta02.x + beta01.x) / 2.0, (beta02.y + beta01.y) / 2.0);
+            auto beta20 = Point((beta11.x + beta10.x) / 2.0, (beta11.y + beta10.y) / 2.0);
+
+            auto mid = Point((beta02.x + beta00.x) / 2.0, (beta02.y + beta00.y) / 2.0);
+            auto height = Point(beta20.x - mid.x, beta20.y - mid.y);
+
+            if (height.x * height.x + height.y * height.y > flatnessThreshold && stackSize + 6 < STACK_SIZE)
+            {
+                // We still havent reached the desired flatness which means we have to subdivide
+                stack[stackSize] = beta00;
+                stack[stackSize + 1] = beta10;
+                stack[stackSize + 2] = beta20;
+
+                stack[stackSize + 3] = beta20;
+                stack[stackSize + 4] = beta11;
+                stack[stackSize + 5] = beta02;
+
+                stackSize += 6;
+            }
+            else 
+            {
+                AddEdge(edges, beta00, beta01);
+                AddEdge(edges, beta01, beta02);
+            }
+        }
+    }
+
+
+    static constexpr F32 FLATNESS_CONSTANT_IN_PIXELS  = 0.3;
+
+    auto Linearize(const GlyphData& glyphData, F32 scale) -> Array<Edge>
+    {
+        Array<Edge> edges;
+
+        // Invert the scalar transform in order to get the flatness threshold in the glyph coordinate
+        // system.
+        auto flatnessThreshold = FLATNESS_CONSTANT_IN_PIXELS / scale;
+        // We do this to avoid using square root during linearization of Bezier Curves.
+        flatnessThreshold = flatnessThreshold * flatnessThreshold;
+
+        for (auto& curve : glyphData.components)
+        {
+            if (HoldsAlternative<QuadraticBezierCurve>(curve))
+            {
+                auto& bezier = Get<QuadraticBezierCurve>(curve);
+                Linearize
+                (
+                    edges,
+                    flatnessThreshold,
+                    Point(bezier.startPoint.x, bezier.startPoint.y),
+                    Point(bezier.controlPoint.x, bezier.controlPoint.y),
+                    Point(bezier.endPoint.x, bezier.endPoint.y)
+                );
+            }
+            else if (HoldsAlternative<Line>(curve))
+            {
+                auto& line = Get<Line>(curve);
+                AddEdge
+                (
+                    edges,
+                    Point(line.startPoint.x, line.startPoint.y),
+                    Point(line.endPoint.x, line.endPoint.y)
+                );
+            }
+        }
+
+        return edges;
+    }
+
+
+    auto TransformEdgesToSurfaceSpace(Array<Edge>& edges, F32 scale, Point translation) -> V
+    {
+        for (auto& edge : edges)
+        {
+            // We flip the second coordinate in order to match the coordinates of the pixel grid.
+            // This doesn't change the direction of the edges but now the uppermost edge is with lower
+            // numbers as vertical coordinates which is what we want.
+            edge.lowermostPoint.x *= scale;
+            edge.lowermostPoint.y *= -scale;
+            edge.uppermostPoint.x *= scale;
+            edge.uppermostPoint.y *= -scale;
+            edge.lowermostPoint.x += translation.x;
+            edge.lowermostPoint.y += translation.y;
+            edge.uppermostPoint.x += translation.x;
+            edge.uppermostPoint.y += translation.y;
+        }
+    }
+
+
+    // Here it's more convenient to store the edge in slope-intercept form.
+    struct ActiveEdge
+    {
+        F32 lowermostPoint1;
+        F32 uppermostPoint1;
+        // The zeroth component of the intersection of the line passing through the edge's vertices 
+        // with the current scanline. By having this point, the slope and the first components of the 
+        // edge's vertices we can restore their original positions as well as easily compute the zeroth
+        // component of the intersection of the edge with a certain scanline.
+        F32 scanlineTopIntersection0;
+        // The derivative with respect to the zeroth direction.
+        F32 dxdy;
+        F32 direction;
+
+        ActiveEdge(F32 l1, F32 u1, F32 sti0, F32 dxdy, F32 dir) :
+            lowermostPoint1(l1),
+            uppermostPoint1(u1),
+            scanlineTopIntersection0(sti0),
+            dxdy(dxdy),
+            direction(dir)
+        {
+
+        }
+    };
+
+
+    auto Activate(Array<ActiveEdge>& activeEdges, const Edge& edge, F32 scanlineTop) -> V
+    {
+        static constexpr F32 HORIZONTALITY_TOLERANCE  = (1.0f / F32(1 << 15)) * 4.0f;
+        auto dx = edge.lowermostPoint.x - edge.uppermostPoint.x;
+        auto dy = edge.lowermostPoint.y - edge.uppermostPoint.y;
+
+        if (dy <= HORIZONTALITY_TOLERANCE)
+        {
+            // We dont want horizontal edges just drop them
+        }
+        else 
+        {
+            auto dxdy = dx / dy;
+
+            auto scanlineTopIntersection0 = 
+                edge.uppermostPoint.x + dxdy * (scanlineTop - edge.uppermostPoint.y);
+
+            activeEdges.emplace_back
+            (
+                edge.lowermostPoint.y,
+                edge.uppermostPoint.y,
+                scanlineTopIntersection0,
+                dxdy,
+                edge.direction
+            );
+        }
+    }
+
+    auto AddActiveEdges
+    (
+        Array<ActiveEdge>& activeEdges,
+        const Array<Edge>& edges,
+        U32& edgesIdx,
+        F32 scanlineBot,
+        F32 scanlineTop
+    )
+    {
+        // Add all the edges that have their uppermost point before the end of this scanline
+        while (edgesIdx < edges.size() && edges[edgesIdx].uppermostPoint.y < scanlineBot)
+        {
+            Activate(activeEdges, edges[edgesIdx], scanlineTop);
+            edgesIdx++;
+        }
+    }
+
+    auto ProcessActiveEdge(const ActiveEdge& edge, Array<Point>& scanline, F32 scanlineBot, F32 scanlineTop)
+    {
+        // Now we need to find the highest point of the edge that is below the top of the scanline and 
+        // the lowest point of the edge that is above the scanline bottom. In case that the edges go 
+        // beyond the sanline the points we search for are intersections.
+        Point highPoint;
+        Point lowPoint;
+
+        if (scanlineTop < edge.uppermostPoint1)
+        {
+            highPoint.x = 
+                edge.scanlineTopIntersection0 + edge.dxdy * (edge.uppermostPoint1 - scanlineTop);
+            highPoint.y = edge.uppermostPoint1;
+        }
+        else
+        {
+            // Here we know that since the actual edge is above the scanline, the 0th direction 
+            // intersection has to be inside the surface since all edges are inside the surface
+            highPoint.x = edge.scanlineTopIntersection0;
+            highPoint.y = scanlineTop;
+        }
+
+        if (scanlineBot < edge.lowermostPoint1)
+        {
+            lowPoint.x = edge.scanlineTopIntersection0 + edge.dxdy;
+            lowPoint.y = scanlineBot;
+        }
+        else 
+        {
+            lowPoint.x = 
+                edge.scanlineTopIntersection0 + edge.dxdy * (edge.lowermostPoint1 - scanlineTop);
+            lowPoint.y = edge.lowermostPoint1;
+        }
+
+        // Once we have clipped the edge to the boundaries of the scanline there are two relevant 
+        // possibilities to look for namely wether or not high_point.0 < low_point.0. In the two cases
+        // the computation of the area will look differently because we process the pixels of the 
+        // scanline from left to right (increasing in the 0th direction) hence we will care about the 
+        // 0th coordinate of the edge. 
+        //
+        // However we can avoid that by simply recognizing that flipping the clipped edge around it's 
+        // vertical center won't change the unsigned area.
+
+        auto dxdy = edge.dxdy;
+        auto sign = edge.direction;
+
+        if (highPoint.x > lowPoint.x)
+        {
+            Swap(lowPoint.x, highPoint.x);
+            // The tangent also flips.
+            dxdy = -dxdy;
+        }
+
+        auto startPixel = Max(0.0f, Floor(highPoint.x));
+        auto startPixelIdx = U32(startPixel);
+        auto endPixel = Ceil(lowPoint.x);
+        auto height = lowPoint.y - highPoint.y;
+
+        // Spans a single pixel and is trapezoid
+        if (endPixel - startPixel <= 1.0f)
+        {
+            // We use startPixel + 1.0 instead of endPixel to handle vertical edges properly
+            auto area = height * ((startPixel + 1.0 - lowPoint.x) + (startPixel + 1.0 - highPoint.x)) / 2.0;
+
+            scanline[startPixelIdx].x += sign * area;
+
+            startPixelIdx++;
+            // It induces rectangles in all the other pixels on the right hence we put the height
+            // times one (the width of the rectangles) in the next entry of the commulative sum 
+            // array (second component of the scanline).
+            if (startPixelIdx < scanline.size())
+            {
+                scanline[startPixelIdx].y += sign * height;
+            }
+        }
+        else
+        {
+            // We need to find where the edge intersects the vertical pixel barier of the first
+            // pixel containing it.
+
+            auto width = startPixel + 1.0 - highPoint.x;
+            auto dydx = 1.0 / dxdy;
+
+            auto intersection1 = highPoint.y + width * dydx;
+            auto height = intersection1 - highPoint.y;
+
+            auto area = width * height / 2.0;
+
+            scanline[startPixelIdx].x += sign * area;
+            startPixelIdx++;
+
+            auto endPixelIdx = U32(Round(endPixel - 1.0));
+
+            while (startPixelIdx < endPixelIdx)
+            {
+
+                auto area = (height + height + dydx) / 2.0;
+
+                scanline[startPixelIdx].x += sign * area;
+
+                height += dydx;
+                startPixelIdx++;
+            }
+
+            // This is a combination of a trapezoid and rectangle
+            auto endWidthRect = endPixel - lowPoint.x;
+            auto endWidthTrap = 1.0 - endWidthRect;
+            auto endHeight = height + endWidthTrap * dydx;
+            auto endPixelArea = (height + endHeight) / 2.0 * endWidthTrap + endHeight * endWidthRect;
+
+            scanline[endPixelIdx].x += sign * endPixelArea;
+
+            endPixelIdx++;
+
+            if (endPixelIdx < scanline.size())
+            {
+                // All the remaining pixels are ocluded by rectangles with width 1 and height
+                // end_height.
+                scanline[endPixelIdx].y += sign * endHeight;
+            }
+        }
+    }
+
+
+    auto ProcessActiveEdges(const Array<ActiveEdge>& edges, Array<Point>& scanline, F32 scanlineBot, F32 scanlineTop)
+    {
+        for (auto& edge : edges)
+        {
+            ProcessActiveEdge(edge, scanline, scanlineBot, scanlineTop);
+        }
+    }
+
+    auto PrepareActiveEdgesForNextScanline(Array<ActiveEdge>& edges)
+    {
+        for (auto& edge : edges)
+        {
+            // Find the value of x 1 unit further by adding the slope.
+            edge.scanlineTopIntersection0 += edge.dxdy;
+        }
+    }
+
+
+    auto PruneActiveEdges(Array<ActiveEdge>& activeEdges, F32 scanlineTop)
+    {
+        auto idx = 0;
+
+        while (idx < activeEdges.size())
+        {
+            // We check if the edge is above the scanline in order to remove it
+            if (activeEdges[idx].lowermostPoint1 <= scanlineTop)
+            {
+                Swap(activeEdges[idx], activeEdges.back());
+                activeEdges.pop_back();
+                idx--;
+            }
+
+            idx++;
+        }
+    }
+
+
+    auto ClearScanline(Array<Point>& scanline) 
+    {
+        for (auto& pix : scanline)
+        {
+            pix.x = 0.f;
+            pix.y = 0.f;
+        }
+    }
+
+
+    auto DrawScanline(GrayScaleSurface& surface, const Array<Point>& scanline, U32 scanlineIdx)
+    {
+        F32 commulativeSum = 0.f;
+        for (auto i = 0; i < surface.width; ++i)
+        {
+            commulativeSum += scanline[i].y;
+            auto value = Max(Min((commulativeSum + scanline[i].x) * 255.f, 255.f), 0.f);
+            surface.data[surface.width * scanlineIdx + i] = 255u - Byte(value);
+        }
+    }
+
+    // This function implements the high level functionality of the rasterizing algorithm
+    auto RasterizeEdges(Array<Edge>& edges, GrayScaleSurface& surface) 
+    {
+        surface.data.resize(surface.height * surface.width);
+
+        // We store first component which represents the signed area of a pixel shadowed by an outline,
+        // and then a second component that works as a commulative sum which will indicate that the 
+        // area will be added to all the rest of the pixels on the right.
+        Array<Point> scanline;
+        scanline.resize(surface.width , Point(0.f, 0.f));
+
+        // We keep a set of edges that are relevant for the current scanline each iteration
+        Array<ActiveEdge> activeEdges;
+        activeEdges.reserve(surface.width);
+
+        auto edgesIdx = 0u;
+
+        for (auto i = 0u; i < surface.height;++i) 
+        {
+            auto scanlineTop = F32(i);
+            auto scanlineBot = F32(i + 1.f);
+
+            // Remove edges that are not relevant for this scanline, hence no longer relevant in 
+            // general.
+            PruneActiveEdges(activeEdges, scanlineTop);
+            // Add all the new edges that have become relevant for the scanline.
+            AddActiveEdges(activeEdges, edges, edgesIdx, scanlineBot, scanlineTop);
+            // Fill the scanline array according to the edges intersecting the scanline
+            ProcessActiveEdges(activeEdges, scanline, scanlineBot, scanlineTop);
+            // Fill the surface scanline according to the scanline array
+            DrawScanline(surface, scanline, i);
+            ClearScanline(scanline);
+            // Transform the representation of the active edges so that they are convenient for
+            // pruning and processing next scanline.
+            PrepareActiveEdgesForNextScanline(activeEdges);
+        }
+    }
+
+    auto Rasterize(const GlyphData& glyph_data, F32 scale) -> GrayScaleSurface
+    {
+        GrayScaleSurface surface;
+
+        F32 minX = glyph_data.boundingBoxDiagonal.startPoint.x;
+        F32 minY = glyph_data.boundingBoxDiagonal.startPoint.y;
+        F32 maxX = glyph_data.boundingBoxDiagonal.endPoint.x;
+        F32 maxY = glyph_data.boundingBoxDiagonal.endPoint.y;
+
+        surface.width = Ceil((maxX - minX+ 1.0) * scale);
+        surface.height = Ceil((maxY - minY + 1.0) * scale);
+
+        // The next code can be confusing beause some operations are omitted due to mental algebra.
+        // If S is the scaling matrix R is the reflection matrix tO is translation of the lowermost 
+        // bounding box point to the origin, then tC is the translation of the resulting bounding box's
+        // center to the origin and tSc is the translation of the scaled bounding box's lowermost point
+        // to the origin then the final transformation T on point p is Tp = RS(p + tO + tC) + t_sc.
+        // Now when we writeout the explicit form of the final translation vector of this affine 
+        // transformation namely RStO + RStC + tsC some of the terms in the components will cencel 
+        // out.
+        // 
+        // This operation is done only once per rasterization so it's irrelevant how efficient it is. 
+        // I would've used more clear form but I've not implemented traits for 2d matrix algebra so I 
+        // have to resort to this confusing componentwise form.
+
+        auto tO = Point(-minX, -minY);
+        auto tC1 = minY - maxY;
+
+        auto translationVector = Point(scale * tO.x, -scale * (tO.y + tC1));
+
+        auto edges = Linearize(glyph_data, scale);
+
+        TransformEdgesToSurfaceSpace(edges, scale, translationVector);
+
+        // Sort by the uppermost edges. Edges with uppermost points the higher up will be first.
+        Sort(edges);
+
+        RasterizeEdges(edges, surface);
+
+        return surface;
+    }
+
+    auto RasterizeGlyph(const FontData& fontData, I32 codepoint, I32 height) -> GrayScaleSurface
+    {
+        auto expectedMaxHeight = F32(fontData.ascent) - fontData.descent;
+        auto fontScale = height / expectedMaxHeight;
+
+        auto glyph = fontData.FetchGlyphDataForCodepoint(codepoint);
+        return Rasterize(glyph, fontScale);
     }
 }
 

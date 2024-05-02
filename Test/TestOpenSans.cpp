@@ -33,7 +33,7 @@ auto main() -> I32
 {
 	FontData fontData;
 	auto result = fontData.Load(Span<const U8>(OpenSans, OpenSansSize));
-	
+	RasterizeGlyph(fontData, 32, 180);
 	if (result != Error::Success)
 	{
 		return -1;
