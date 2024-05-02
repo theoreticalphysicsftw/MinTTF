@@ -1054,7 +1054,7 @@ namespace MTTF
         }
         else if (segmentRangeOffset == 0)
         {
-            return codepoint + segmentDeltaOffset;
+            return (codepoint + segmentDeltaOffset) & 0xFFFFu;
         }
         else
         {
@@ -1159,11 +1159,11 @@ namespace MTTF
 
         if (this->longLocaIndex)
         {
-            offset += FromBE(*(const U32*)(this->locaTable.offset + 4 * glyphIndex));
+            offset += FromBE(*(const U32*)(this->data.data() + this->locaTable.offset + 4 * glyphIndex));
         }
         else
         {
-            offset += FromBE(*(const U16*)(this->locaTable.offset + 2 * glyphIndex)) * 2;
+            offset += FromBE(*(const U16*)(this->data.data() + this->locaTable.offset + 2 * glyphIndex)) * 2;
         }
 
         return offset;
@@ -1178,11 +1178,11 @@ namespace MTTF
 
         struct GlyfHeader
         {
-            I32 numberOfContours;
-            I32 xMin;
-            I32 yMin;
-            I32 xMax;
-            I32 yMax;
+            I16 numberOfContours;
+            I16 xMin;
+            I16 yMin;
+            I16 xMax;
+            I16 yMax;
         };
 
         auto glyfHeaderPtr = (const GlyfHeader*)(this->data.data() + glyphOffset);
