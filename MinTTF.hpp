@@ -1359,12 +1359,12 @@ namespace MTTF
         F32 direction;
     };
 
-    auto operator<(const Edge& e0, const Edge& e1) -> bool 
+    inline auto operator<(const Edge& e0, const Edge& e1) -> bool 
     {
         return e0.uppermostPoint.y < e1.uppermostPoint.y;
     }
 
-    auto operator==(const Edge& e0, const Edge& e1) -> bool
+    inline auto operator==(const Edge& e0, const Edge& e1) -> bool
     {
         return e0.uppermostPoint.y == e1.uppermostPoint.y;
     }
