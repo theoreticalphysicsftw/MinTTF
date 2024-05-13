@@ -28,9 +28,11 @@ enable_language(CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(EMBEDDED_FONT "${CMAKE_CURRENT_SOURCE_DIR}/Test/OpenSans.cpp")
+file(GLOB TESTS "${CMAKE_CURRENT_SOURCE_DIR}/Test/*.cpp")
+list(REMOVE_ITEM TESTS ${EMBEDDED_FONT})
 
-file(GLOB TESTS "Test/*.cpp")
 foreach(TEST ${TESTS})
     cmake_path(GET TEST STEM TEST_NAME)
-    add_executable(${TEST_NAME} "${TEST}")
+    add_executable(${TEST_NAME} "${TEST}" "${EMBEDDED_FONT}")
 endforeach()
