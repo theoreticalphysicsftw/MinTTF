@@ -28,10 +28,42 @@
 using namespace MTTF;
 
 #include <fstream>
+#include <string>
 
 inline auto WritePGM(const GrayScaleSurface& surf)
 {
 	std::fstream ofs("TestOpenStans.pgm", std::ios::binary | std::ios::out | std::ios::trunc);
 	ofs << "P5\n" << surf.width << ' ' << surf.height << "\n255\n";
 	ofs.write((const C*)surf.data.data(), surf.width * surf.height);
+}
+
+inline auto WriteToSVG(const GlyphData& glyphData)
+{
+	std::fstream ofs("glyphData.svg", std::ios::binary | std::ios::out | std::ios::trunc);
+	auto width = glyphData.boundingBoxDiagonal.endPoint.x - glyphData.boundingBoxDiagonal.startPoint.x;
+	auto height = glyphData.boundingBoxDiagonal.endPoint.y - glyphData.boundingBoxDiagonal.startPoint.y;
+
+	Str svg = "<svg xmlns = \"http://www.w3.org/2000/svg\" width =\"";
+	svg += std::to_string(width);
+	svg += "\" height=\"" + std::to_string(height) + "\"";
+	svg += " viewBox=\" ";
+	svg += std::to_string(glyphData.boundingBoxDiagonal.startPoint.x) + " ";
+	svg += std::to_string(glyphData.boundingBoxDiagonal.startPoint.y) + " ";
+	svg += std::to_string(glyphData.boundingBoxDiagonal.endPoint.x) + " ";
+	svg += std::to_string(glyphData.boundingBoxDiagonal.endPoint.y) + " ";
+	svg += "\">\n";
+
+	for (auto& component : glyphData.components)
+	{
+		if (HoldsAlternative<QuadraticBezierCurve>(component))
+		{
+
+		}
+		else
+		{
+
+		}
+	}
+
+	ofs.write(svg.data(), svg.size());
 }
