@@ -36,5 +36,6 @@ auto main() -> I32
 	{
 		return -1;
 	}
-	auto glyphData = fontData.FetchGlyphDataForCodepoint(65);
+	auto glyphData = fontData.FetchGlyphDataForCodepoint(75);
+	WriteToSVG(glyphData);
 }

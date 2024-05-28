@@ -57,13 +57,30 @@ inline auto WriteToSVG(const GlyphData& glyphData)
 	{
 		if (HoldsAlternative<QuadraticBezierCurve>(component))
 		{
+			auto& curve = Get<QuadraticBezierCurve>(component);
 
+			auto cp1X = curve.startPoint.x + 2.f / 3.f * (curve.controlPoint.x - curve.startPoint.x);
+			auto cp1Y = curve.startPoint.y + 2.f / 3.f * (curve.controlPoint.y - curve.startPoint.y);
+			auto cp2X = curve.endPoint.x + 2.f / 3.f * (curve.controlPoint.x - curve.endPoint.x);
+			auto cp2Y = curve.endPoint.y + 2.f / 3.f * (curve.controlPoint.y - curve.endPoint.y);
+
+			svg += "<path stroke=\"#000000\" fill=\"none\" d=\"";
+			svg += "M " + std::to_string(curve.startPoint.x) + " " + std::to_string(curve.startPoint.y) + " ";
+			svg += "C " + std::to_string(cp1X) + " " + std::to_string(cp1Y) + " ";
+			svg += std::to_string(cp2X) + " " + std::to_string(cp2Y) + " ";
+			svg += std::to_string(curve.endPoint.x) + " " + std::to_string(curve.endPoint.y);
+			svg += "\"></path>\n";
 		}
 		else
 		{
-
+			auto& line = Get<Line>(component);
+			svg += "<path stroke=\"#000000\" fill=\"none\" d=\"";
+			svg += "M " + std::to_string(line.startPoint.x) + " " + std::to_string(line.startPoint.y) + " ";
+			svg += "L " + std::to_string(line.endPoint.x) + " " + std::to_string(line.endPoint.y);
+			svg += "\"></path>\n";
 		}
 	}
 
+	svg += "</svg>\n";
 	ofs.write(svg.data(), svg.size());
 }
