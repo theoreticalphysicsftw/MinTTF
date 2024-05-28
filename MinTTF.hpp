@@ -1259,7 +1259,7 @@ namespace MTTF
 
                    // Holy shit!!! The documentation was so misleading here. I had so much trouble
                    // finding this bug...
-                   vertices[i].x = I32(prevCoord) + ((flags[i] & 0b00010000u) > 0) ? I32(tmpCoord) : I32(-tmpCoord);
+                   vertices[i].x = I32(prevCoord) + (((flags[i] & 0b00010000u) > 0) ? I32(tmpCoord) : -I32(tmpCoord));
                    prevCoord = vertices[i].x;
                }
                // coordinate is encoded as i16
@@ -1287,13 +1287,13 @@ namespace MTTF
                 // Coordinate is encoded as u8
                 if ((flags[i] & 0b00000100u) > 0)
                 {
-                    auto tmpCoord = this->data[currentOffset];;
+                    auto tmpCoord = this->data[currentOffset];
                     currentOffset += 1;
 
                     // Holy mother of fuck why nobody mentioned that those were deltas as well?!?
                     // I'm looking at you
                     // developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6glyf.html
-                    vertices[i].y = I32(prevCoord) + ((flags[i] & 0b00100000u) > 0) ? I32(tmpCoord) : I32(-tmpCoord);
+                    vertices[i].y = I32(prevCoord) + (((flags[i] & 0b00100000u) > 0) ? I32(tmpCoord) : -I32(tmpCoord));
                     prevCoord = vertices[i].y;
                 }
                 // coordinate is encoded as i16
