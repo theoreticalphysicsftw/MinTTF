@@ -270,6 +270,18 @@ namespace MTTF
     }
 
     template <typename T>
+    auto Sqrt(T x) -> T
+    {
+        return std::sqrt(x);
+    }
+
+    template <typename T>
+    auto Square(T x) -> T
+    {
+        return x * x;
+    }
+
+    template <typename T>
     auto Round(T x) -> T
     {
         return std::round(x);
@@ -1416,7 +1428,7 @@ namespace MTTF
         // going to be less than half a pixel!
 
         // Number of points times the division depth
-        static constexpr U32 STACK_SIZE = 3 * 15;
+        static constexpr U32 STACK_SIZE = 3 * 16;
 
         StaticArray<Point, STACK_SIZE> stack;
         stack[0] = point0;
@@ -1426,20 +1438,20 @@ namespace MTTF
 
         while (0 < stackSize)
         {
-            auto& beta02 = stack[stackSize - 1];
-            auto& beta01 = stack[stackSize - 2];
-            auto& beta00 = stack[stackSize - 3];
+            auto beta02 = stack[stackSize - 1];
+            auto beta01 = stack[stackSize - 2];
+            auto beta00 = stack[stackSize - 3];
             stackSize -= 3;
 
-            auto beta10 = Point((beta01.x + beta00.x) / 2.0, (beta01.y + beta00.y) / 2.0);
-            auto beta11 = Point((beta02.x + beta01.x) / 2.0, (beta02.y + beta01.y) / 2.0);
-            auto beta20 = Point((beta11.x + beta10.x) / 2.0, (beta11.y + beta10.y) / 2.0);
+            auto approxLength =
+                Sqrt(Square(beta00.x - beta01.x) + Square(beta00.y - beta01.y)) +
+                Sqrt(Square(beta01.x - beta02.x) + Square(beta01.y - beta02.y));
 
-            auto mid = Point((beta02.x + beta00.x) / 2.0, (beta02.y + beta00.y) / 2.0);
-            auto height = Point(beta20.x - mid.x, beta20.y - mid.y);
-
-            if (height.x * height.x + height.y * height.y > flatnessThreshold && stackSize + 6 < STACK_SIZE)
+            if (approxLength > flatnessThreshold && stackSize + 6 < STACK_SIZE)
             {
+                auto beta10 = Point((beta01.x + beta00.x) / 2.0, (beta01.y + beta00.y) / 2.0);
+                auto beta11 = Point((beta02.x + beta01.x) / 2.0, (beta02.y + beta01.y) / 2.0);
+                auto beta20 = Point((beta11.x + beta10.x) / 2.0, (beta11.y + beta10.y) / 2.0);
                 // We still havent reached the desired flatness which means we have to subdivide
                 stack[stackSize] = beta00;
                 stack[stackSize + 1] = beta10;
@@ -1460,7 +1472,7 @@ namespace MTTF
     }
 
 
-    static constexpr F32 FLATNESS_CONSTANT_IN_PIXELS  = 0.3;
+    static constexpr F32 FLATNESS_CONSTANT_IN_PIXELS = 1;
 
     auto Linearize(const GlyphData& glyphData, F32 scale) -> Array<Edge>
     {
